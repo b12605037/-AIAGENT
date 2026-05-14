@@ -72,4 +72,57 @@ async function sendText(overrideText) {
         const data = await res.json();
         const aiMsg = data.candidates[0].content.parts[0].text;
         processAIResponse(aiMsg);
-    } catch (
+    } catch (e) {
+        appendMsg('ai', "連線似乎有點問題，請稍後再試。");
+    }
+}
+
+function processAIResponse(text) {
+    chatHistory.push({ role: "model", parts: [{ text: text }] });
+    const match = text.match(/\[SHOW_Q(\d+)\]/);
+    const cleanText = text.replace(/\[SHOW_Q\d+\]/g, '').trim();
+    
+    appendMsg('ai', cleanText);
+
+    const btnGroup = document.getElementById('button-group');
+    const textGroup = document.getElementById('text-input-group');
+    
+    if(match && Q_OPTS[match[1]]) {
+        btnGroup.innerHTML = '';
+        Q_OPTS[match[1]].forEach(opt => {
+            const b = document.createElement('button');
+            b.innerText = opt;
+            b.onclick = () => sendText(opt);
+            btnGroup.appendChild(b);
+        });
+        btnGroup.classList.remove('hidden');
+        textGroup.classList.add('hidden');
+    } else {
+        btnGroup.classList.add('hidden');
+        textGroup.classList.remove('hidden');
+    }
+}
+
+function appendMsg(role, text) {
+    const m = document.getElementById('messages');
+    const d = document.createElement('div');
+    d.className = `bubble ${role}`;
+    d.innerText = text;
+    m.appendChild(d);
+    m.scrollTop = m.scrollHeight;
+}
+
+function exportTranscript() {
+    let t = "訪談逐字稿\n\n" + chatHistory.map(h => `${h.role === 'user' ? '受訪者' : '訪談員'}: ${h.parts[0].text}`).join('\n\n');
+    const blob = new Blob([t], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '影音訪談逐字稿.txt';
+    a.click();
+}
+
+// 初始化開場：加上 [SHOW_Q0] 標記來觸發同意按鈕
+processAIResponse("您好，感謝您參與本次研究。本訪談採匿名進行，資料僅供學術用途。請問您是否同意開始訪談？ [SHOW_Q0]");
+</script>
+</body>
+</html>
