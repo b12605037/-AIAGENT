@@ -51,7 +51,7 @@ const Q_OPTS = {
 };
 
 let chatHistory = [];
-const PROMPT = "你是一位專業訪談員。主題：影音平台濃縮影片研究。請依據題目清單 [cite: 13] 訪談。規則：一次一題。若該題有選項，結尾必須加上 [SHOW_Q數字]。";
+const PROMPT = "你是一位專業訪談員。研究主題是「影音平台濃縮影片觀看行為研究」。你的目標是與受訪者（18-35 歲影音用戶）進行訪談。規則：一次只問一個問題，語氣中性且親切。若該題目為選擇題，請務必在回應的最後一行單獨加上 [SHOW_Q數字] 標記，不要列出選項文字。";
 
 async function sendText(text) {
     const val = text || document.getElementById('user-input').value;
