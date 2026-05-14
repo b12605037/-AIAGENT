@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>影音平台觀看行為研究 | AI 訪談 Agent</title>
+    <style>
+        :root { --primary: #1D9E75; --bg: #f4f7f6; }
+        body { font-family: sans-serif; display: flex; height: 100vh; margin: 0; background: var(--bg); }
+        #sidebar { width: 280px; background: #2c3e50; color: white; padding: 20px; }
+        #chat-area { flex: 1; display: flex; flex-direction: column; }
+        #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .bubble { max-width: 80%; padding: 12px; border-radius: 15px; line-height: 1.5; }
+        .ai { align-self: flex-start; background: white; }
+        .user { align-self: flex-end; background: var(--primary); color: white; }
+        #input-zone { padding: 20px; background: white; border-top: 1px solid #ddd; }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        button { padding: 8px 15px; border-radius: 20px; border: 1px solid var(--primary); background: white; color: var(--primary); cursor: pointer; }
+        button:hover { background: var(--primary); color: white; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+<div id="sidebar">
+    <h3>訪談進度</h3>
+    <p>研究對象：18-35歲影音用戶 [cite: 10]</p>
+    <p style="font-size: 0.8em; color: #bdc3c7;">完成後請點選匯出</p>
+    <button onclick="exportTranscript()" style="width:100%; margin-top:20px;">匯出逐字稿</button>
+</div>
+<div id="chat-area">
+    <div id="messages"></div>
+    <div id="input-zone">
+        <div id="button-group" class="btn-group hidden"></div>
+        <div id="text-input-group">
+            <input type="text" id="user-input" style="width:70%; padding:8px;" placeholder="請輸入回答...">
+            <button onclick="sendText()">送出</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const Q_OPTS = {
+    "1": ["18 歲以下", "18–25 歲", "26–35 歲"],
+    "2": ["完整劇集", "完整電影", "劇情解說／濃縮影片", "以上都不太看"],
+    "3": ["有，自己付費", "有，和人共用", "沒有"],
+    "4": ["幾乎每天", "一週幾次", "一個月幾次", "很少看", "幾乎不看"],
+    "5": ["只看完整版", "只看濃縮版", "先看濃縮再看完整", "兩者皆看無順序", "看情況"],
+    "6": ["韓劇", "歐美影集", "台劇／華語劇", "日劇／動漫", "電影", "紀錄片", "無特定偏好"],
+    "8": ["原速看完", "加速看完", "看一半", "只看開頭", "不一定"],
+    "9": ["追完原版", "挑片段看", "不看原版", "看情況"],
+    "11": ["原速追完", "加速追完", "很高機率放棄", "喜歡才追完"]
+};
+
+let chatHistory = [];
+const PROMPT = "你是一位專業訪談員。主題：影音平台濃縮影片研究。請依據題目清單 [cite: 13] 訪談。規則：一次一題。若該題有選項，結尾必須加上 [SHOW_Q數字]。";
+
+async function sendText(text) {
+    const val = text || document.getElementById('user-input').value;
+    if(!val) return;
+    appendMsg('user', val);
+    document.getElementById('user-input').value = '';
+    chatHistory.push({ role: "user", parts: [{ text: val }] });
+
+    const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ system_instruction: { parts: [{ text: PROMPT }] }, contents: chatHistory })
+    });
+    const data = await res.json();
+    const aiMsg = data.candidates[0].content.parts[0].text;
+    processAIResponse(aiMsg);
+}
+
+function processAIResponse(text) {
+    chatHistory.push({ role: "model", parts: [{ text: text }] });
+    const match = text.match(/\[SHOW_Q(\d+)\]/);
+    const cleanText = text.replace(/\[SHOW_Q\d+\]/g, '');
+    appendMsg('ai', cleanText);
+
+    const btnGroup = document.getElementById('button-group');
+    const textGroup = document.getElementById('text-input-group');
+    if(match) {
+        btnGroup.innerHTML = '';
+        Q_OPTS[match[1]].forEach(opt => {
+            const b = document.createElement('button');
+            b.innerText = opt;
+            b.onclick = () => sendText(opt);
+            btnGroup.appendChild(b);
+        });
+        btnGroup.classList.remove('hidden');
+        textGroup.classList.add('hidden');
+    } else {
+        btnGroup.classList.add('hidden');
+        textGroup.classList.remove('hidden');
+    }
+}
+
+function appendMsg(role, text) {
+    const m = document.getElementById('messages');
+    const d = document.createElement('div');
+    d.className = `bubble ${role}`;
+    d.innerText = text;
+    m.appendChild(d);
+    m.scrollTop = m.scrollHeight;
+}
+
+function exportTranscript() {
+    let t = chatHistory.map(h => `${h.role === 'user' ? '受訪者' : '訪談員'}: ${h.parts[0].text}`).join('\n\n');
+    const blob = new Blob([t], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '訪談逐字稿.txt';
+    a.click();
+}
+
+// 初始化
+processAIResponse("您好，感謝參與影音平台研究。本訪談匿名且僅供學術使用 [cite: 9]。請問您是否同意開始訪談？");
+</script>
+</body>
+</html>
