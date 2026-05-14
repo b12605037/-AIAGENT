@@ -39,6 +39,7 @@
 
 <script>
 const Q_OPTS = {
+    "0": ["同意", "不同意"],
     "1": ["18 歲以下", "18–25 歲", "26–35 歲"],
     "2": ["完整劇集", "完整電影", "劇情解說／濃縮影片", "以上都不太看"],
     "3": ["有，自己付費", "有，和人共用", "沒有"],
@@ -51,8 +52,7 @@ const Q_OPTS = {
 };
 
 let chatHistory = [];
-const PROMPT = "你是一位專業訪談員。研究主題是「影音平台濃縮影片觀看行為研究」。你的目標是與受訪者（18-35 歲影音用戶）進行訪談。規則：一次只問一個問題，語氣中性且親切。若該題目為選擇題，請務必在回應的最後一行單獨加上 [SHOW_Q數字] 標記，不要列出選項文字。";
-
+const PROMPT = const PROMPT = "你是一位專業訪談員。主題：影音平台濃縮影片研究。規則：1.一次一題。2.若受訪者點選「不同意」，請禮貌地感謝並結束對話。3.若同意，請立即詢問年齡並加上 [SHOW_Q1]...";
 async function sendText(text) {
     const val = text || document.getElementById('user-input').value;
     if(!val) return;
@@ -113,7 +113,7 @@ function exportTranscript() {
 }
 
 // 初始化
-processAIResponse("您好，感謝參與影音平台研究。本訪談匿名且僅供學術使用 [cite: 9]。請問您是否同意開始訪談？");
+processAIResponse("您好，感謝您參與本次研究。本訪談採匿名進行，資料僅供學術用途。請問您是否同意開始訪談？ [SHOW_Q0]");
 </script>
 </body>
 </html>
