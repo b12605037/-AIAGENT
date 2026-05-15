@@ -25,20 +25,27 @@
     <h3>訪談進度</h3>
     <p>研究對象：18-35歲影音用戶</p>
     <hr style="opacity: 0.3;">
-    <button onclick="exportTranscript()" style="width:100%; background:#95a5a6; color:white; border:none; padding:12px; border-radius:8px; cursor:pointer;">匯出逐字稿</button>
+    <button id="export-btn" onclick="exportTranscript()" style="display:none; width:100%; background:#95a5a6; color:white; border:none; padding:12px; border-radius:8px; cursor:pointer;">匯出逐字稿</button>
 </div>
 <div id="chat-area">
     <div id="messages"></div>
     <div id="input-zone">
         <div id="button-group" class="btn-group hidden"></div>
-        <div id="text-input-group">
-            <input type="text" id="user-input" style="width:75%; padding:12px; border-radius:8px; border:1px solid #ddd;" placeholder="請輸入您的回答...">
+        <div id="text-input-group" style="display: flex; align-items: center;">
+            <input type="text" id="user-input" style="flex: 1; padding:12px; border-radius:8px; border:1px solid #ddd;" placeholder="請輸入您的回答...">
             <button onclick="sendText()" style="margin-left:8px;">送出</button>
+            <button onclick="saveToDatabase()" style="margin-left:8px; background:#e74c3c; border-color:#e74c3c; color:white;">結束並上傳</button>
         </div>
     </div>
 </div>
 
 <script>
+// 【研究員專屬機關】檢查網址是否有 ?admin=1
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('admin') === '1') {
+    document.getElementById('export-btn').style.display = 'block';
+}
+
 const Q_OPTS = {
     "0": ["同意", "不同意"],
     "1": ["18 歲以下", "18–25 歲", "26–35 歲"],
@@ -53,7 +60,7 @@ const Q_OPTS = {
 };
 
 let chatHistory = [];
-const PROMPT = "你是一位專業的使用者研究訪談員。規則：1.一次只問一題，並且在問下一題時不需要太強硬的複述。2.若受訪者點選「同意」，請立即詢問年齡區間並加上 [SHOW_Q1]。3.若該題有選項，結尾必須加上 [SHOW_Q數字]，不要列出選項。4.若該題你判斷可以追問，請進行3題以內的追問";
+const PROMPT = "你是一位專業訪談員。規則：1.一次只問一題。2.若受訪者點選「同意」，請立即詢問年齡區間並加上 [SHOW_Q1]。3.若該題有選項，結尾必須加上 [SHOW_Q數字]，不要列出選項。";
 
 async function sendText(overrideText) {
     const val = overrideText || document.getElementById('user-input').value;
@@ -62,6 +69,18 @@ async function sendText(overrideText) {
     appendMsg('user', val);
     document.getElementById('user-input').value = '';
     chatHistory.push({ role: "user", parts: [{ text: val }] });
+
+    // 【UX 節流】隱藏輸入區與按鈕，顯示打字中
+    document.getElementById('button-group').classList.add('hidden');
+    document.getElementById('text-input-group').classList.add('hidden');
+    
+    const m = document.getElementById('messages');
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = `bubble ai`;
+    loadingDiv.id = 'loading-msg';
+    loadingDiv.innerText = "訪談員打字中...";
+    m.appendChild(loadingDiv);
+    m.scrollTop = m.scrollHeight;
 
     try {
         const res = await fetch('/api/chat', {
@@ -74,9 +93,15 @@ async function sendText(overrideText) {
         });
         
         const data = await res.json();
+        
+        // 移除打字中提示
+        if (document.getElementById('loading-msg')) {
+            document.getElementById('loading-msg').remove();
+        }
 
         if (data.error) {
             appendMsg('ai', `API 錯誤：${data.error.message}`, true);
+            document.getElementById('text-input-group').classList.remove('hidden');
             return;
         }
 
@@ -84,10 +109,15 @@ async function sendText(overrideText) {
             const aiMsg = data.candidates[0].content.parts[0].text;
             processAIResponse(aiMsg);
         } else {
-            appendMsg('ai', "收到無效回應，請檢查 API 金鑰與設定。", true);
+            appendMsg('ai', "收到無效回應，請稍後再試。", true);
+            document.getElementById('text-input-group').classList.remove('hidden');
         }
     } catch (e) {
+        if (document.getElementById('loading-msg')) {
+            document.getElementById('loading-msg').remove();
+        }
         appendMsg('ai', `連線異常：${e.message}`, true);
+        document.getElementById('text-input-group').classList.remove('hidden');
     }
 }
 
@@ -136,8 +166,51 @@ function exportTranscript() {
     a.click();
 }
 
+// 【新增功能】上傳到 Webhook
+async function saveToDatabase() {
+    let formattedTranscript = chatHistory.map(h => 
+        `${h.role === 'user' ? '受訪者' : 'AI'}: ${h.parts[0].text.replace(/\[SHOW_Q\d+\]/g, '')}`
+    ).join('\n\n');
+
+    const payload = {
+        time: new Date().toLocaleString('zh-TW'),
+        transcript: formattedTranscript
+    };
+
+    // 👇 👇 👇 請把你在 n8n 或 Make 產生的 Webhook 網址貼在下面引號內 👇 👇 👇
+    const webhookUrl = "你的_WEBHOOK_網址請貼在這裡"; 
+
+    try {
+        const btns = document.querySelectorAll('#text-input-group button');
+        const uploadBtn = btns[1]; // 取得上傳按鈕
+        uploadBtn.innerText = "傳送中...";
+        uploadBtn.disabled = true;
+
+        const response = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+            alert('訪談紀錄已成功上傳！非常感謝您的參與。');
+            uploadBtn.innerText = "已上傳";
+        } else {
+            alert('上傳發生錯誤，請稍後再試。');
+            uploadBtn.innerText = "結束並上傳";
+            uploadBtn.disabled = false;
+        }
+    } catch (e) {
+        alert('網路連線異常，或者 Webhook 尚未設定完成。');
+        console.error(e);
+        const btns = document.querySelectorAll('#text-input-group button');
+        btns[1].innerText = "結束並上傳";
+        btns[1].disabled = false;
+    }
+}
+
 // 初始化開場
-processAIResponse("您好，感謝您撥冗參與本次的影音觀看習慣研究。本訪談採全匿名方式進行，收集之資料僅供課程學術分析使用，絕不外流。請問您是否同意開始訪談？ [SHOW_Q0]");
+processAIResponse("哈囉！非常感謝你抽空參與這次的訪談。接下來的對話將會全程匿名，內容也只會作為這堂課的學術分析使用，請完全放心。如果準備好的話，請問你是否同意開始今天的訪談呢？ [SHOW_Q0]");
 </script>
 </body>
 </html>
