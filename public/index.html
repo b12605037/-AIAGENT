@@ -53,7 +53,7 @@ const Q_OPTS = {
 };
 
 let chatHistory = [];
-const PROMPT = "你是一位專業的使用者研究訪談員。規則：1.一次只問一題。2.若受訪者點選「同意」，請立即詢問年齡區間並加上 [SHOW_Q1]。3.若該題有選項，結尾必須加上 [SHOW_Q數字]，不要列出選項。4.若該題你判斷可以追問，請進行3題以內的追問";
+const PROMPT = "你是一位專業的使用者研究訪談員。規則：1.一次只問一題，並且在問下一題時不需要太強硬的複述。2.若受訪者點選「同意」，請立即詢問年齡區間並加上 [SHOW_Q1]。3.若該題有選項，結尾必須加上 [SHOW_Q數字]，不要列出選項。4.若該題你判斷可以追問，請進行3題以內的追問";
 
 async function sendText(overrideText) {
     const val = overrideText || document.getElementById('user-input').value;
