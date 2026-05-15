@@ -18,14 +18,11 @@
         button:hover { background: var(--primary); color: white; }
         .hidden { display: none !important; }
         .error-text { color: #e74c3c; font-weight: bold; background: #fdf2f2; border: 1px solid #e74c3c; }
-        #timer { font-size: 20px; color: #f1c40f; font-weight: bold; margin-top: 10px; }
     </style>
 </head>
 <body>
 <div id="sidebar">
-    <h3>訪談狀態</h3>
-    <div id="timer">剩餘時間：60:00</div>
-    <hr style="opacity: 0.3;">
+    <h3>訪談進度</h3>
     <p>研究對象：18-35歲影音用戶</p>
     <p style="font-size: 12px; color: #bdc3c7;">目標：分析濃縮影片之導流與侵蝕效應</p>
     <hr style="opacity: 0.3;">
@@ -44,40 +41,25 @@
 </div>
 
 <script>
+// --- 管理者模式 ---
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('admin') === '1') {
     document.getElementById('export-btn').style.display = 'block';
 }
 
-// --- 計時器邏輯 ---
-let timeLeft = 3600; // 60 分鐘 = 3600 秒
-let timerActive = false;
+// --- 計時與結束邏輯 ---
+let isTimeUp = false; 
+let interviewEnded = false;
 
-function startTimer() {
-    if (timerActive) return;
-    timerActive = true;
-    const timerDisplay = document.getElementById('timer');
-    const interval = setInterval(() => {
-        let mins = Math.floor(timeLeft / 60);
-        let secs = timeLeft % 60;
-        timerDisplay.innerText = `剩餘時間：${mins}:${secs < 10 ? '0' : ''}${secs}`;
-        
-        if (timeLeft <= 0) {
-            clearInterval(interval);
-            forceEndInterview();
-        }
-        timeLeft--;
-    }, 1000);
+function startInterviewTimer() {
+    // 60 分鐘 = 3,600,000 毫秒
+    setTimeout(() => {
+        isTimeUp = true;
+        console.log("Time is up! The next AI response will be the closing statement.");
+    }, 3600000); 
 }
 
-function forceEndInterview() {
-    alert("訪談時間已達 60 分鐘，系統將自動結束。請點擊「確定」後上傳您的紀錄。");
-    document.getElementById('text-input-group').classList.add('hidden');
-    document.getElementById('button-group').classList.add('hidden');
-    appendMsg('ai', "【系統通知】訪談時間已結束，請點擊右下角「結束並上傳」按鈕以完成流程。");
-}
-
-// --- 第一階段：固定腳本設定 ---
+// --- 固定腳本 ---
 const FIXED_QUESTIONS = [
     { id: "Q1", text: "請問您的年齡區間是？", options: ["18 歲以下", "18–25 歲", "26–35 歲"] },
     { id: "Q2", text: "平時看影片的習慣偏向？", options: ["完整劇集", "完整電影", "劇情解說／濃縮影片", "兩者都會看"] },
@@ -112,25 +94,19 @@ function showButtons(options, callback) {
     btnGroup.classList.remove('hidden');
 }
 
-function hideButtons() {
-    document.getElementById('button-group').classList.add('hidden');
-}
-
 function handleFixedAnswer(answer) {
     appendMsg('user', answer);
-    hideButtons();
+    document.getElementById('button-group').classList.add('hidden');
     if (currentFixedStep === -1) {
         if (answer === "不同意") {
             appendMsg('ai', "好的，感謝您的時間，本次訪談到此結束。");
             return;
         }
-        // 同意後立刻開始倒數計時
-        startTimer();
+        startInterviewTimer();
         currentFixedStep = 0;
         askNextFixedQuestion();
     } else {
-        let qText = FIXED_QUESTIONS[currentFixedStep].text;
-        collectedProfile.push(`- ${qText}：${answer}`);
+        collectedProfile.push(`- ${FIXED_QUESTIONS[currentFixedStep].text}：${answer}`);
         currentFixedStep++;
         askNextFixedQuestion();
     }
@@ -148,11 +124,11 @@ function askNextFixedQuestion() {
     }
 }
 
-// --- 第二階段：交接點 ---
-const PROMPT = `你是一位專業的研究員。核心目標：探討濃縮影片對正版內容的影響。
+// --- AI 階段邏輯 ---
+const SYSTEM_PROMPT = `你是一位專業的研究員。核心目標：探討濃縮影片對正版內容的影響。
 1. 深入挖掘受訪者看完濃縮片後，是否會去找原版。
 2. 語氣自然，一次只問一題。
-3. 嚴禁偏離主題聊劇情，重點在觀看決策。`;
+3. 若收到系統標記【TIME_IS_UP】，代表訪談時間已到。請在本次回覆中直接對受訪者進行溫和的總結與致謝，不要再提出新問題。`;
 
 async function transitionToAI() {
     appendMsg('ai', "感謝您的回答！接下來我想深入聊聊您對「濃縮影片」與「原版影劇」的具體看法...");
@@ -161,13 +137,20 @@ async function transitionToAI() {
     await fetchAIResponse();
 }
 
-// --- 第三階段：AI 訪談 (含延遲防爆) ---
 async function sendTextToAI() {
     const val = document.getElementById('user-input').value;
-    if(!val || timeLeft <= 0) return;
+    if(!val || interviewEnded) return;
     appendMsg('user', val);
     document.getElementById('user-input').value = '';
-    chatHistory.push({ role: "user", parts: [{ text: val }] });
+    
+    // 如果時間到了，在發送給 AI 的內容中偷偷打小報告
+    let userText = val;
+    if (isTimeUp) {
+        userText += " 【TIME_IS_UP】";
+        interviewEnded = true; // 標記為結束，回傳後鎖定輸入
+    }
+    
+    chatHistory.push({ role: "user", parts: [{ text: userText }] });
     await fetchAIResponse();
 }
 
@@ -188,32 +171,33 @@ async function fetchAIResponse() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
-                system_instruction: { parts: [{ text: PROMPT }] }, 
+                system_instruction: { parts: [{ text: SYSTEM_PROMPT }] }, 
                 contents: chatHistory 
             })
         });
         const data = await res.json();
         if (document.getElementById('loading-msg')) document.getElementById('loading-msg').remove();
 
-        if (data.error) {
-            appendMsg('ai', `連線異常，請稍後再試。`, true);
-        } else if (data.candidates && data.candidates[0].content) {
+        if (data.candidates && data.candidates[0].content) {
             const aiMsg = data.candidates[0].content.parts[0].text;
             appendMsg('ai', aiMsg);
             chatHistory.push({ role: "model", parts: [{ text: aiMsg }] });
         }
     } catch (e) {
         if (document.getElementById('loading-msg')) document.getElementById('loading-msg').remove();
-        appendMsg('ai', `系統繁忙。`, true);
+        appendMsg('ai', "連線稍忙，請重試。", true);
     }
     
-    // 如果時間還沒到，才恢復輸入框
-    if (timeLeft > 0) {
+    // 判斷是否要恢復輸入框
+    if (!interviewEnded) {
         document.getElementById('text-input-group').classList.remove('hidden');
         document.getElementById('text-input-group').style.display = 'flex';
+    } else {
+        appendMsg('ai', "【系統提示】訪談已完成，請點擊右下角「結束並上傳」按鈕。");
     }
 }
 
+// --- 匯出與儲存 ---
 function exportTranscript() {
     let t = "訪談逐字稿\n" + "=".repeat(20) + "\n\n" + fullTranscript.join('\n\n---\n\n');
     const blob = new Blob([t], { type: 'text/plain' });
@@ -236,8 +220,9 @@ async function saveToDatabase() {
     } catch (e) { alert('尚未設定 Webhook'); }
 }
 
+// 初始化
 setTimeout(() => {
-    appendMsg('ai', "您好！感謝參與研究。本次訪談皆採匿名進行，資料僅供本課程分析所用。請問您是否同意開始訪談？");
+    appendMsg('ai', "您好！感謝參與研究。本次訪談內容僅供學術分析使用，請問您是否同意開始訪談？");
     showButtons(["同意", "不同意"], handleFixedAnswer);
 }, 500);
 </script>
