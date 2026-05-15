@@ -24,6 +24,7 @@
 <div id="sidebar">
     <h3>訪談進度</h3>
     <p>研究對象：18-35歲影音用戶</p>
+    <p style="font-size: 12px; color: #bdc3c7; margin-top: 10px;">目標：分析濃縮影片之導流與侵蝕效應</p>
     <hr style="opacity: 0.3;">
     <button id="export-btn" onclick="exportTranscript()" style="display:none; width:100%; background:#95a5a6; color:white; border:none; padding:12px; border-radius:8px; cursor:pointer;">匯出逐字稿</button>
 </div>
@@ -48,9 +49,9 @@ if (urlParams.get('admin') === '1') {
 // --- 第一階段：固定腳本設定 ---
 const FIXED_QUESTIONS = [
     { id: "Q1", text: "請問您的年齡區間是？", options: ["18 歲以下", "18–25 歲", "26–35 歲"] },
-    { id: "Q2", text: "平時最常看哪種類型的影片？", options: ["完整劇集", "完整電影", "劇情解說／濃縮影片", "以上都不太看"] },
-    { id: "Q3", text: "請問是否有訂閱付費平台？", options: ["有，自己付費", "有，和人共用", "沒有"] },
-    { id: "Q4", text: "您觀看影音內容的頻率大約是？", options: ["幾乎每天", "一週幾次", "一個月幾次", "很少看", "幾乎不看"] }
+    { id: "Q2", text: "平時看影片的習慣偏向？", options: ["完整劇集", "完整電影", "劇情解說／濃縮影片", "兩者都會看"] },
+    { id: "Q3", text: "請問是否有訂閱付費平台（如 Netflix, Disney+ 等）？", options: ["有，自己付費", "有，和人共用", "沒有"] },
+    { id: "Q4", text: "您觀看「濃縮影片（劇情解說）」的頻率大約是？", options: ["幾乎每天", "一週幾次", "一個月幾次", "很少看", "幾乎不看"] }
 ];
 
 let currentFixedStep = -1; 
@@ -114,17 +115,25 @@ function askNextFixedQuestion() {
     }
 }
 
-// --- 第二階段：交接點 ---
-const PROMPT = "你是一位專業、親切的用戶研究訪談員。請根據受訪者的基本資料進行追問，探索動機。一次只問一個問題，語氣要自然。";
+// --- 第二階段：交接點 (設定深度訪談目標) ---
+const PROMPT = `你是一位專業的影音消費行為研究員。
+本次訪談核心目標：探討「濃縮影片/劇情解說」對「原版/正版內容」的影響（是導流還是侵蝕）。
+
+請遵循以下引導守則：
+1. 深入挖掘受訪者在看完濃縮片後，是否會產生「想去找原版來看」的衝動？(導流價值)
+2. 或是覺得「看完解說就等於看完了」，因而不再去支持正版？(侵蝕利益)
+3. 詢問具體的轉化經驗：什麼樣的內容會讓他們看完解說後去補原版？
+4. 語氣要親切自然，像朋友聊天，一次只問一題，不要讓受訪者覺得在做嚴肅問卷。
+5. 嚴禁偏離主題去深聊影集劇情細節，重點應放在「觀看決策」與「付費意願」。`;
 
 async function transitionToAI() {
-    appendMsg('ai', "太好了，感謝您提供資訊！接下來我想進一步了解您的觀影體驗...");
-    let handoverPrompt = `【受訪者背景】\n${collectedProfile.join('\n')}\n\n請根據背景開始提問第一個開放式問題。`;
+    appendMsg('ai', "感謝您的回答！接下來我想深入聊聊您對「濃縮影片」與「原版影劇」的看法...");
+    let handoverPrompt = `【受訪者基本資料】\n${collectedProfile.join('\n')}\n\n請根據背景開始提問第一個開放式問題，引導受訪者分享其看過濃縮片後是否會去尋找原版看的具體經驗。`;
     chatHistory.push({ role: "user", parts: [{ text: handoverPrompt }] });
     await fetchAIResponse();
 }
 
-// --- 第三階段：AI 訪談 (含強制延遲) ---
+// --- 第三階段：AI 訪談 (含強制延遲與防偏題邏輯) ---
 async function sendTextToAI() {
     const val = document.getElementById('user-input').value;
     if(!val) return;
@@ -144,7 +153,7 @@ async function fetchAIResponse() {
     m.appendChild(loadingDiv);
     m.scrollTop = m.scrollHeight;
 
-    // 🌟 強制等待 4 秒，保護 API 不撞速限
+    // 強制等待 4 秒保護 API
     await new Promise(resolve => setTimeout(resolve, 4000));
 
     try {
@@ -160,7 +169,7 @@ async function fetchAIResponse() {
         if (document.getElementById('loading-msg')) document.getElementById('loading-msg').remove();
 
         if (data.error) {
-            appendMsg('ai', `API 錯誤：${data.error.message}`, true);
+            appendMsg('ai', `連線稍忙，請稍等片刻再試 (Error: ${data.error.message})`, true);
         } else if (data.candidates && data.candidates[0].content) {
             const aiMsg = data.candidates[0].content.parts[0].text;
             appendMsg('ai', aiMsg);
@@ -168,18 +177,18 @@ async function fetchAIResponse() {
         }
     } catch (e) {
         if (document.getElementById('loading-msg')) document.getElementById('loading-msg').remove();
-        appendMsg('ai', `連線異常：${e.message}`, true);
+        appendMsg('ai', `連線異常，請重新整理網頁。`, true);
     }
     document.getElementById('text-input-group').classList.remove('hidden');
     document.getElementById('text-input-group').style.display = 'flex';
 }
 
 function exportTranscript() {
-    let t = "訪談逐字稿\n" + "=".repeat(20) + "\n\n" + fullTranscript.join('\n\n---\n\n');
+    let t = "影音平台觀看行為研究 - 訪談逐字稿\n" + "=".repeat(30) + "\n\n" + fullTranscript.join('\n\n---\n\n');
     const blob = new Blob([t], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'transcript.txt';
+    a.download = '訪談逐字稿.txt';
     a.click();
 }
 
@@ -191,13 +200,13 @@ async function saveToDatabase() {
         btn.innerText = "傳送中...";
         btn.disabled = true;
         const res = await fetch(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.ok) { alert('成功！'); btn.innerText = "已上傳"; }
-        else { alert('錯誤'); btn.innerText = "重試"; btn.disabled = false; }
-    } catch (e) { alert('失敗'); }
+        if (res.ok) { alert('訪談紀錄已成功上傳！'); btn.innerText = "已上傳"; }
+        else { alert('上傳失敗'); btn.innerText = "結束並上傳"; btn.disabled = false; }
+    } catch (e) { alert('尚未設定 Webhook'); }
 }
 
 setTimeout(() => {
-    appendMsg('ai', "哈囉！感謝參與研究。訪談內容僅供學術分析使用，請問是否同意開始？");
+    appendMsg('ai', "您好！感謝參與本次研究。本次訪談皆採匿名進行，資料僅供本課程分析所用。請問您是否同意開始訪談？");
     showButtons(["同意", "不同意"], handleFixedAnswer);
 }, 500);
 </script>
