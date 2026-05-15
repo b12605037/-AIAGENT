@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   
   // 修正後的 URL：確保模型名稱前面有 v1beta 且路徑完全正確
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+ const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
   try {
     const response = await fetch(url, {
