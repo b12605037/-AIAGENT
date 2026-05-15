@@ -40,17 +40,12 @@
 </div>
 
 <script>
-// 【研究員專屬機關】
 const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('admin') === '1') {
     document.getElementById('export-btn').style.display = 'block';
 }
 
-// ==========================================
-// 第一階段：前端固定腳本 (零 API 消耗)
-// ==========================================
-
-// 題庫設定 (你可以自由增減這裡的題目)
+// --- 第一階段：固定腳本設定 ---
 const FIXED_QUESTIONS = [
     { id: "Q1", text: "請問您的年齡區間是？", options: ["18 歲以下", "18–25 歲", "26–35 歲"] },
     { id: "Q2", text: "平時最常看哪種類型的影片？", options: ["完整劇集", "完整電影", "劇情解說／濃縮影片", "以上都不太看"] },
@@ -58,12 +53,11 @@ const FIXED_QUESTIONS = [
     { id: "Q4", text: "您觀看影音內容的頻率大約是？", options: ["幾乎每天", "一週幾次", "一個月幾次", "很少看", "幾乎不看"] }
 ];
 
-let currentFixedStep = -1; // -1 代表同意書階段
-let collectedProfile = []; // 儲存受訪者的選擇結果
-let chatHistory = [];      // 儲存給 AI 看的對話歷史 (包含背景資料)
-let fullTranscript = [];   // 儲存完整逐字稿 (包含所有過程)
+let currentFixedStep = -1; 
+let collectedProfile = []; 
+let chatHistory = [];      
+let fullTranscript = [];   
 
-// 處理畫面上的對話泡泡
 function appendMsg(role, text, isError = false) {
     const m = document.getElementById('messages');
     const d = document.createElement('div');
@@ -71,14 +65,9 @@ function appendMsg(role, text, isError = false) {
     d.innerText = text;
     m.appendChild(d);
     m.scrollTop = m.scrollHeight;
-    
-    // 同步記錄到匯出用的逐字稿中
-    if (!isError) {
-        fullTranscript.push(`${role === 'user' ? '【受訪者】' : '【訪談員】'}\n${text}`);
-    }
+    if (!isError) fullTranscript.push(`${role === 'user' ? '【受訪者】' : '【訪談員】'}\n${text}`);
 }
 
-// 顯示按鈕
 function showButtons(options, callback) {
     const btnGroup = document.getElementById('button-group');
     btnGroup.innerHTML = '';
@@ -91,30 +80,23 @@ function showButtons(options, callback) {
     btnGroup.classList.remove('hidden');
 }
 
-// 隱藏按鈕
 function hideButtons() {
     document.getElementById('button-group').classList.add('hidden');
 }
 
-// 處理固定題目的推進
 function handleFixedAnswer(answer) {
     appendMsg('user', answer);
     hideButtons();
-
     if (currentFixedStep === -1) {
         if (answer === "不同意") {
             appendMsg('ai', "好的，感謝您的時間，本次訪談到此結束。");
             return;
         }
-        // 同意後，進入第一題
         currentFixedStep = 0;
         askNextFixedQuestion();
     } else {
-        // 紀錄剛才那題的答案
         let qText = FIXED_QUESTIONS[currentFixedStep].text;
         collectedProfile.push(`- ${qText}：${answer}`);
-        
-        // 推進下一題
         currentFixedStep++;
         askNextFixedQuestion();
     }
@@ -122,54 +104,38 @@ function handleFixedAnswer(answer) {
 
 function askNextFixedQuestion() {
     if (currentFixedStep < FIXED_QUESTIONS.length) {
-        // 還沒問完，繼續問選擇題
         let nextQ = FIXED_QUESTIONS[currentFixedStep];
         setTimeout(() => {
             appendMsg('ai', nextQ.text);
             showButtons(nextQ.options, handleFixedAnswer);
-        }, 500); // 假裝打字停頓 0.5 秒
+        }, 500); 
     } else {
-        // 選擇題問完了！準備交接給 AI
         transitionToAI();
     }
 }
 
-// ==========================================
-// 第二階段：交接點 (將資料打包餵給 AI)
-// ==========================================
-const PROMPT = "你是一位專業、親切的用戶研究訪談員。你的任務是進行一對一的深度訪談。規則：1. 一次絕對只問一個問題。2. 請根據受訪者的回答進行自然追問，探索他們背後的動機。3. 語氣像真人聊天，不要像機器人唸稿。";
+// --- 第二階段：交接點 ---
+const PROMPT = "你是一位專業、親切的用戶研究訪談員。請根據受訪者的基本資料進行追問，探索動機。一次只問一個問題，語氣要自然。";
 
 async function transitionToAI() {
-    appendMsg('ai', "太好了，感謝您提供這些基本資訊！接下來我想進一步了解您的觀影體驗。");
-    
-    // 建立交接文件 (這些字不會顯示在畫面上，只會偷偷傳給 AI)
-    let handoverPrompt = `【系統提示：這是受訪者的基本資料】\n${collectedProfile.join('\n')}\n\n請根據上述資料，提出你的第一個開放式問題（例如：詢問他們最近看過最印象深刻的影片是什麼，或是針對他們剛才選的觀看類型做深入追問）。一次只問一題。`;
-    
-    // 將交接文件放入歷史紀錄
+    appendMsg('ai', "太好了，感謝您提供資訊！接下來我想進一步了解您的觀影體驗...");
+    let handoverPrompt = `【受訪者背景】\n${collectedProfile.join('\n')}\n\n請根據背景開始提問第一個開放式問題。`;
     chatHistory.push({ role: "user", parts: [{ text: handoverPrompt }] });
-
-    // 觸發 AI 產生第一個開放式問題
     await fetchAIResponse();
 }
 
-// ==========================================
-// 第三階段：AI 開放式訪談 (消耗 API)
-// ==========================================
-
+// --- 第三階段：AI 訪談 (含強制延遲) ---
 async function sendTextToAI() {
     const val = document.getElementById('user-input').value;
     if(!val) return;
-    
     appendMsg('user', val);
     document.getElementById('user-input').value = '';
     chatHistory.push({ role: "user", parts: [{ text: val }] });
-
     await fetchAIResponse();
 }
 
 async function fetchAIResponse() {
     document.getElementById('text-input-group').classList.add('hidden');
-    
     const m = document.getElementById('messages');
     const loadingDiv = document.createElement('div');
     loadingDiv.className = `bubble ai`;
@@ -177,6 +143,9 @@ async function fetchAIResponse() {
     loadingDiv.innerText = "訪談員思考中...";
     m.appendChild(loadingDiv);
     m.scrollTop = m.scrollHeight;
+
+    // 🌟 強制等待 4 秒，保護 API 不撞速限
+    await new Promise(resolve => setTimeout(resolve, 4000));
 
     try {
         const res = await fetch('/api/chat', {
@@ -187,9 +156,8 @@ async function fetchAIResponse() {
                 contents: chatHistory 
             })
         });
-        
         const data = await res.json();
-        document.getElementById('loading-msg').remove();
+        if (document.getElementById('loading-msg')) document.getElementById('loading-msg').remove();
 
         if (data.error) {
             appendMsg('ai', `API 錯誤：${data.error.message}`, true);
@@ -197,73 +165,41 @@ async function fetchAIResponse() {
             const aiMsg = data.candidates[0].content.parts[0].text;
             appendMsg('ai', aiMsg);
             chatHistory.push({ role: "model", parts: [{ text: aiMsg }] });
-        } else {
-            appendMsg('ai', "收到無效回應，請稍後再試。", true);
         }
     } catch (e) {
-        document.getElementById('loading-msg').remove();
+        if (document.getElementById('loading-msg')) document.getElementById('loading-msg').remove();
         appendMsg('ai', `連線異常：${e.message}`, true);
     }
-    
-    // 開放輸入框讓受訪者回答
     document.getElementById('text-input-group').classList.remove('hidden');
     document.getElementById('text-input-group').style.display = 'flex';
 }
 
-// ==========================================
-// 工具功能：匯出與上傳
-// ==========================================
 function exportTranscript() {
-    let t = "影音平台觀看行為研究 - 訪談逐字稿\n" + "=".repeat(30) + "\n\n";
-    t += fullTranscript.join('\n\n---\n\n');
+    let t = "訪談逐字稿\n" + "=".repeat(20) + "\n\n" + fullTranscript.join('\n\n---\n\n');
     const blob = new Blob([t], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = '訪談逐字稿.txt';
+    a.download = 'transcript.txt';
     a.click();
 }
 
 async function saveToDatabase() {
-    const payload = {
-        time: new Date().toLocaleString('zh-TW'),
-        transcript: fullTranscript.join('\n\n')
-    };
-
+    const payload = { time: new Date().toLocaleString(), transcript: fullTranscript.join('\n\n') };
     const webhookUrl = "你的_WEBHOOK_網址請貼在這裡"; 
-
     try {
-        const uploadBtn = document.querySelectorAll('#text-input-group button')[1];
-        uploadBtn.innerText = "傳送中...";
-        uploadBtn.disabled = true;
-
-        const response = await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (response.ok) {
-            alert('訪談紀錄已成功上傳！非常感謝您的參與。');
-            uploadBtn.innerText = "已上傳";
-        } else {
-            alert('Webhook 上傳發生錯誤，請稍後再試。');
-            uploadBtn.innerText = "結束並上傳";
-            uploadBtn.disabled = false;
-        }
-    } catch (e) {
-        alert('尚未設定 Webhook 或連線異常。');
-        const uploadBtn = document.querySelectorAll('#text-input-group button')[1];
-        uploadBtn.innerText = "結束並上傳";
-        uploadBtn.disabled = false;
-    }
+        const btn = document.querySelectorAll('#text-input-group button')[1];
+        btn.innerText = "傳送中...";
+        btn.disabled = true;
+        const res = await fetch(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res.ok) { alert('成功！'); btn.innerText = "已上傳"; }
+        else { alert('錯誤'); btn.innerText = "重試"; btn.disabled = false; }
+    } catch (e) { alert('失敗'); }
 }
 
-// 初始化開場
 setTimeout(() => {
-    appendMsg('ai', "哈囉！非常感謝你抽空參與這次的訪談。接下來的對話將會全程匿名，內容也只會作為這堂課的學術分析使用，請完全放心。如果準備好的話，請問你是否同意開始今天的訪談呢？");
+    appendMsg('ai', "哈囉！感謝參與研究。訪談內容僅供學術分析使用，請問是否同意開始？");
     showButtons(["同意", "不同意"], handleFixedAnswer);
 }, 500);
-
 </script>
 </body>
 </html>
