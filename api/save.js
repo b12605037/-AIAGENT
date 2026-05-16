@@ -24,25 +24,26 @@ function getSheetsClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
-function serializeAnswers(answers) {
-  if (!answers || typeof answers !== 'object') return '';
+function serializeJson(v) {
+  if (v == null) return '';
   try {
-    return JSON.stringify(answers);
+    return JSON.stringify(v);
   } catch {
-    return String(answers);
+    return String(v);
   }
+}
+
+function joinArr(v) {
+  return Array.isArray(v) ? v.join(' | ') : v != null ? String(v) : '';
 }
 
 function flattenRow(payload) {
   const a = payload.answers || {};
+  const f = payload.followups || {};
   const ts = payload.timestamp || new Date().toISOString();
   const early = payload.early_exit || '';
-  const scenario = payload.scenario
-    ? serializeAnswers(payload.scenario)
-    : '';
 
-  const joinArr = (v) =>
-    Array.isArray(v) ? v.join(' | ') : v != null ? String(v) : '';
+  const w = a.willingness_by_type || {};
 
   return [
     ts,
@@ -50,19 +51,25 @@ function flattenRow(payload) {
     a.gender ?? '',
     a.ntu_student ?? '',
     joinArr(a.video_types),
-    a.condensed_exposure ?? '',
-    a.subscription ?? '',
+    joinArr(a.condensed_source_types),
+    a.condensed_source_other ?? '',
     a.condensed_frequency ?? '',
+    joinArr(a.contact_channels),
+    a.contact_channels_other ?? '',
+    a.subscription ?? '',
+    joinArr(a.subscription_reasons),
+    a.subscription_reasons_other ?? '',
     a.after_condensed ?? '',
     a.after_condensed_followup ?? '',
     joinArr(a.reasons_original),
     a.reasons_original_other ?? '',
     joinArr(a.reasons_no_original),
     a.reasons_no_original_other ?? '',
-    a.interest_likelihood ?? '',
-    a.subscription_recent ?? '',
-    a.perceived_effect ?? '',
-    scenario,
+    w.tv_series ?? '',
+    w.movie ?? '',
+    a.overall_willingness_impact ?? '',
+    serializeJson(f.q9 ?? a.followup_q9),
+    serializeJson(f.q10 ?? a.followup_q10),
   ];
 }
 
@@ -90,7 +97,7 @@ export default async function handler(req, res) {
 
   try {
     const sheets = getSheetsClient();
-    const range = `${sheetName}!A:R`;
+    const range = `${sheetName}!A:X`;
     const values = [flattenRow(payload)];
 
     await sheets.spreadsheets.values.append({

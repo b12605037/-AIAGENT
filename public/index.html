@@ -349,6 +349,16 @@
   .end-card .icon { font-size: 28px; margin-bottom: 8px; }
   .end-card h2 { font-size: 17px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
   .end-card p { font-size: 14px; color: var(--text-secondary); }
+
+  .matrix-hint {
+    max-width: 640px;
+    width: 100%;
+    margin: 0 auto;
+    padding-left: 42px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
@@ -377,34 +387,97 @@
 
 <script>
 /**
- * 分支規則（對齊 questions.md 與研究設計）
+ * 分支規則（對齊 question-new.md）
  *
- * 1) 影片類型複選：必須包含「劇情解說／濃縮影片」選項，才進入後續核心題。
- *    若未包含（含僅勾選「以上都不太看」），顯示說明後結束，early_exit = video_type_gate。
+ * 1) 影片類型複選：須勾選「劇集解說 / 濃縮影片」或「電影解說 / 濃縮影片」才進入核心題；
+ *    否則 early_exit = video_type_gate。
  *
- * 2) 「你有看過影集或電影的濃縮／解說影片嗎？」選「沒有」→ 結束，early_exit = no_condensed_exposure。
+ * 2) 第 5 題訂閱：僅在「有，自己付費訂閱」或「有，與家人或朋友共用」時顯示訂閱原因追問。
  *
- * 3) 「看完一部濃縮片後，你通常會怎麼做？」若選「看情況，要看是什麼類型的內容」：
- *    追加單選釐清「整體來說哪種狀況較常見」，寫入 answers.after_condensed_followup，
- *    再決定接「有去找原版」或「沒有去找原版」的主要原因複選题（若選「兩種狀況差不多」則兩段原因都詢問）。
+ * 3) 第 6 題選「看情況…」→ 追加單選釐清後，再決定是否顯示第 7／8 題原因複選。
+ *
+ * 4) 第 9 題矩陣：若有效作答中有意願最高／最低且不同，以 Gemini 追問（讀取 answers 全文）。
+ * 5) 第 10 題：選完整體影響後，以 Gemini 追問「為什麼」（讀取 answers 全文）。
  */
 const BOT_AVATAR = '🎬';
-const ENABLE_SCENARIO = false;
 const MAX_TURNS = 2;
 
 const EARLY_EXIT = {
   VIDEO_TYPE_GATE: 'video_type_gate',
-  NO_CONDENSED: 'no_condensed_exposure',
 };
 
-const OPTION_VIDEO_CONDENSED = '劇情解說／濃縮影片（如「X 分鐘看完整部劇」）';
+const OPTION_SERIES_CONDENSED = '劇集解說 / 濃縮影片';
+const OPTION_MOVIE_CONDENSED = '電影解說 / 濃縮影片';
 const OPTION_VIDEO_NONE = '以上都不太看';
 
 const VIDEO_TYPE_OPTIONS = [
   '完整劇集（在串流平台或電視上）',
   '完整電影',
-  OPTION_VIDEO_CONDENSED,
+  OPTION_SERIES_CONDENSED,
+  OPTION_MOVIE_CONDENSED,
   OPTION_VIDEO_NONE,
+];
+
+const CONDENSED_SOURCE_OPTIONS = [
+  '電視劇／影集',
+  '電影',
+  '其他（請簡短說明）',
+];
+
+const FREQUENCY_OPTIONS = [
+  '幾乎每天',
+  '每週 3–5 次',
+  '每週 1–2 次',
+  '每月數次',
+  '幾乎不看，但過去三個月內有看過',
+];
+
+const CONTACT_OPTIONS = [
+  '自己主動搜尋特定影集的濃縮版',
+  '在社群媒體上滑到（如 YouTube、Facebook 推薦）',
+  '朋友或社團分享給我',
+  '看到討論後再主動去找來看',
+  '其他（請簡短說明）',
+];
+
+const SUBSCRIPTION_HAS = ['有，自己付費訂閱', '有，與家人或朋友共用'];
+
+const SUBSCRIPTION_REASON_OPTIONS = [
+  '想看特定劇集或電影',
+  '家人或朋友推薦',
+  '看了濃縮／解說影片後，想看原版內容',
+  '朋友邀請共用，分攤費用',
+  '其他（請簡短說明）',
+];
+
+const WILLINGNESS_OPTIONS = [
+  '明顯提升意願',
+  '稍微提升意願',
+  '沒有影響',
+  '稍微降低意願',
+  '明顯降低意願',
+  '無觀看此類型的濃縮影片',
+];
+
+const WILLINGNESS_SCORE = {
+  '明顯提升意願': 2,
+  '稍微提升意願': 1,
+  '沒有影響': 0,
+  '稍微降低意願': -1,
+  '明顯降低意願': -2,
+};
+
+const MATRIX_TYPES = [
+  { key: 'tv_series', label: '電視劇／影集' },
+  { key: 'movie', label: '電影' },
+];
+
+const OVERALL_IMPACT_OPTIONS = [
+  '明顯提升',
+  '稍微提升',
+  '沒有影響',
+  '稍微降低',
+  '明顯降低',
 ];
 
 const AFTER_CONDENSED = {
@@ -433,9 +506,8 @@ const REASONS_NO_ORIGINAL_OPTIONS = [
 ];
 
 let answers = {};
-let scenarioHistory = [];
-let inScenario = false;
-let scenarioTurns = 0;
+let aiFollowupState = null;
+let aiFollowupDone = null;
 let freeTextResolver = null;
 
 const chatWrap = document.getElementById('chatWrap');
@@ -452,7 +524,15 @@ function delay(ms) {
 }
 
 function passesVideoTypeGate(types) {
-  return Array.isArray(types) && types.includes(OPTION_VIDEO_CONDENSED);
+  if (!Array.isArray(types)) return false;
+  return (
+    types.includes(OPTION_SERIES_CONDENSED) ||
+    types.includes(OPTION_MOVIE_CONDENSED)
+  );
+}
+
+function hasSubscription(choice) {
+  return SUBSCRIPTION_HAS.includes(choice);
 }
 
 function createRow(who, text, isTyping = false) {
@@ -668,16 +748,86 @@ function addEndCard(title, bodyHtml) {
   scrollBottom();
 }
 
+function formatAnswersForPrompt() {
+  const lines = [];
+  const push = (k, v) => {
+    if (v == null || v === '') return;
+    if (Array.isArray(v)) {
+      if (v.length) lines.push(`- ${k}：${v.join('、')}`);
+    } else if (typeof v === 'object') {
+      lines.push(`- ${k}：${JSON.stringify(v)}`);
+    } else {
+      lines.push(`- ${k}：${v}`);
+    }
+  };
+  push('性別', answers.gender);
+  push('是否台大學生', answers.ntu_student);
+  push('平常觀看的影片類型', answers.video_types);
+  push('濃縮影片主要對應的原版類型', answers.condensed_source_types);
+  push('濃縮片觀看頻率', answers.condensed_frequency);
+  push('接觸濃縮片的方式', answers.contact_channels);
+  push('串流訂閱狀況', answers.subscription);
+  push('訂閱主要原因', answers.subscription_reasons);
+  push('看完濃縮片後通常', answers.after_condensed);
+  push('看情況時的補充', answers.after_condensed_followup);
+  push('有去找原版的原因', answers.reasons_original);
+  push('沒有去找原版的原因', answers.reasons_no_original);
+  if (answers.willingness_by_type) {
+    Object.entries(answers.willingness_by_type).forEach(([type, val]) => {
+      const label =
+        type === 'tv_series' ? '電視劇／影集' : type === 'movie' ? '電影' : type;
+      lines.push(`- 第9題 ${label}：${val}`);
+    });
+  }
+  push('整體意願影響', answers.overall_willingness_impact);
+  return lines.join('\n');
+}
+
+function buildFollowupSystemPrompt(topicInstruction, turn, maxTurns) {
+  return `你是一個問卷訪談助理，正在進行「濃縮影片消費行為」的研究訪談。
+
+受訪者目前已填答的內容：
+${formatAnswersForPrompt()}
+
+你現在要進行的追問任務：
+${topicInstruction}
+
+規則：
+1. 語氣輕鬆、自然，像朋友在聊天，使用繁體中文。
+2. 每次只問一個追問，不要一次問很多問題。
+3. 追問必須與受訪者先前的答案相關，可引用具體選項。
+4. 若受訪者已充分說明原因，直接收尾，不要硬追。
+5. 最多追問 ${maxTurns} 輪；目前是第 ${turn} 輪（使用者剛完成一則回覆後計數）。
+6. 不能評價受訪者的答案。
+7. 不能討論與問卷無關的話題。
+8. 收尾時說「謝謝你的分享！」並在訊息最後輸出 [END]。
+9. 若回覆太短，可溫和邀請多說一點。`;
+}
+
+async function callGemini(systemPrompt, messages) {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system: systemPrompt, messages }),
+  });
+  const data = await response.json();
+  return (
+    data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+    data?.content?.[0]?.text ||
+    '謝謝你的分享！[END]'
+  );
+}
+
 async function saveAnswersPayload({ early_exit }) {
   const payload = {
     timestamp: new Date().toISOString(),
     early_exit: early_exit || '',
     answers: { ...answers },
-    scenario: null,
+    followups: {
+      q9: answers.followup_q9 || null,
+      q10: answers.followup_q10 || null,
+    },
   };
-  if (ENABLE_SCENARIO && answers.scenario_1) {
-    payload.scenario = { history: answers.scenario_1 };
-  }
 
   try {
     const res = await fetch('/api/save', {
@@ -743,18 +893,105 @@ async function runReasonsBlock(wantOriginal, wantNoOriginal) {
   }
 }
 
-async function runScenarioIntro(text) {
-  inScenario = true;
-  scenarioTurns = 0;
-  scenarioHistory = [];
-  await addBotBubble(text);
-  enableInput();
+function getMatrixExtremes(matrix) {
+  const labelMap = { tv_series: '電視劇／影集', movie: '電影' };
+  const entries = Object.entries(matrix || {})
+    .filter(([, v]) => v && v !== '無觀看此類型的濃縮影片')
+    .map(([key, value]) => ({
+      key,
+      label: labelMap[key] || key,
+      value,
+      score: WILLINGNESS_SCORE[value] ?? 0,
+    }));
+
+  if (!entries.length) return { highest: null, lowest: null, skip: true };
+
+  let highest = entries[0];
+  let lowest = entries[0];
+  for (const e of entries) {
+    if (e.score > highest.score) highest = e;
+    if (e.score < lowest.score) lowest = e;
+  }
+  if (highest.score === lowest.score && entries.length === 1) {
+    return { highest, lowest: null, skip: false, single: true };
+  }
+  if (highest.score === lowest.score) {
+    return { highest, lowest: null, skip: true };
+  }
+  return { highest, lowest, skip: false, single: false };
 }
 
-async function handleScenarioReply(userText) {
-  scenarioHistory.push({ role: 'user', content: userText });
-  scenarioTurns++;
+async function askWillingnessMatrix() {
+  answers.willingness_by_type = {};
+  await addBotBubble(
+    '以下不同類型的內容，濃縮片對您去找原版觀看的意願影響分別是？\n請針對每種內容類型選擇最符合您狀況的選項。\n\n選項：明顯提升意願／稍微提升意願／沒有影響／稍微降低意願／明顯降低意願／無觀看此類型的濃縮影片',
+  );
 
+  for (const t of MATRIX_TYPES) {
+    const val = await askQuickPick(`【${t.label}】`, WILLINGNESS_OPTIONS);
+    answers.willingness_by_type[t.key] = val;
+  }
+}
+
+function finishAiFollowupSession() {
+  if (aiFollowupDone) {
+    const done = aiFollowupDone;
+    aiFollowupDone = null;
+    done();
+  }
+}
+
+async function startAiFollowup({ intro, topicInstruction, storageKey }) {
+  return new Promise(async (resolve) => {
+    aiFollowupDone = resolve;
+    await addBotBubble(intro);
+    aiFollowupState = {
+      topicInstruction,
+      storageKey,
+      history: [],
+      turns: 0,
+      maxTurns: MAX_TURNS,
+    };
+
+    const typingRow = createRow('bot', null, true);
+    chatWrap.appendChild(typingRow);
+    scrollBottom();
+
+    try {
+      const systemPrompt = buildFollowupSystemPrompt(
+        topicInstruction,
+        0,
+        MAX_TURNS,
+      );
+      const kickoff = [
+        {
+          role: 'user',
+          content:
+            '（系統）請根據追問任務，向受訪者提出第一個開放式問題，一次只問一題。',
+        },
+      ];
+      const replyText = await callGemini(systemPrompt, kickoff);
+      typingRow.remove();
+      const cleanReply = replyText.replace(/\[END\]/g, '').trim();
+      const row = createRow('bot', cleanReply);
+      chatWrap.appendChild(row);
+      scrollBottom();
+      aiFollowupState.history.push({ role: 'assistant', content: cleanReply });
+      enableInput();
+    } catch (err) {
+      typingRow.remove();
+      await addBotBubble('謝謝你的分享！我們繼續下一部分 🙏', false);
+      aiFollowupState = null;
+      finishAiFollowupSession();
+    }
+  });
+}
+
+async function handleAiFollowupReply(userText) {
+  if (!aiFollowupState) return;
+
+  aiFollowupState.history.push({ role: 'user', content: userText });
+  aiFollowupState.turns++;
   disableInput();
 
   const typingRow = createRow('bot', null, true);
@@ -762,80 +999,80 @@ async function handleScenarioReply(userText) {
   scrollBottom();
 
   try {
-    const summaryLines = [
-      `性別：${answers.gender || '—'}`,
-      `是否台大學生：${answers.ntu_student || '—'}`,
-      `影片類型：${(answers.video_types || []).join('、') || '—'}`,
-      `濃縮／解說接觸程度：${answers.condensed_exposure || '—'}`,
-      `串流訂閱：${answers.subscription || '—'}`,
-      `濃縮片頻率：${answers.condensed_frequency || '—'}`,
-      `看完濃縮後通常：${answers.after_condensed || '—'}`,
-    ].join('\n');
-
-    const systemPrompt = `你是一個問卷訪談助理，正在進行「濃縮影片消費行為」的研究訪談。
-
-受訪者背景資訊：
-${summaryLines}
-
-你正在針對以下情境題進行訪談（題幹可視為背景，請用繁體中文）：
-「${SCENARIO_PROMPT_TEXT}」
-
-規則：
-1. 語氣輕鬆自然，像朋友在聊天。
-2. 每次只問一個追問。
-3. 若受訪者已說明行為與原因，直接收尾。
-4. 最多追問 ${MAX_TURNS} 輪；目前為第 ${scenarioTurns} 輪（使用者剛完成一則回覆後計數）。
-5. 不評價答案；不聊與問卷無關的話題。
-6. 收尾時說「謝謝你的分享！」並在訊息最後輸出 [END]。
-7. 若回覆太短，溫和請對方多說一點。`;
-
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system: systemPrompt,
-        messages: scenarioHistory,
-      }),
-    });
-
-    const data = await response.json();
-    const replyText =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      data?.content?.[0]?.text ||
-      '謝謝你的分享！[END]';
-
+    const systemPrompt = buildFollowupSystemPrompt(
+      aiFollowupState.topicInstruction,
+      aiFollowupState.turns,
+      aiFollowupState.maxTurns,
+    );
+    const replyText = await callGemini(
+      systemPrompt,
+      aiFollowupState.history,
+    );
     typingRow.remove();
 
-    const isEnd = replyText.includes('[END]') || scenarioTurns >= MAX_TURNS;
+    const isEnd =
+      replyText.includes('[END]') ||
+      aiFollowupState.turns >= aiFollowupState.maxTurns;
     const cleanReply = replyText.replace(/\[END\]/g, '').trim();
 
     const row = createRow('bot', cleanReply);
     chatWrap.appendChild(row);
     scrollBottom();
 
-    scenarioHistory.push({ role: 'assistant', content: cleanReply });
-    answers.scenario_1 = scenarioHistory;
+    aiFollowupState.history.push({ role: 'assistant', content: cleanReply });
+    answers[aiFollowupState.storageKey] = [...aiFollowupState.history];
 
     if (isEnd) {
-      inScenario = false;
-      await delay(500);
-      await afterScenarioDone();
+      aiFollowupState = null;
+      finishAiFollowupSession();
     } else {
       enableInput();
     }
   } catch (err) {
     typingRow.remove();
-    const row = createRow('bot', '謝謝你的分享！我們先回到問卷結尾 🙏');
+    const row = createRow('bot', '謝謝你的分享！🙏');
     chatWrap.appendChild(row);
     scrollBottom();
-    inScenario = false;
-    await delay(500);
-    await afterScenarioDone();
+    if (aiFollowupState) {
+      answers[aiFollowupState.storageKey] = [...aiFollowupState.history];
+      aiFollowupState = null;
+    }
+    finishAiFollowupSession();
   }
 }
 
-const SCENARIO_PROMPT_TEXT =
-  '（預留）請用文字描述一個與濃縮影片相關的情境，並說明你會怎麼做。';
+async function runQ9AiFollowup() {
+  const { highest, lowest, skip, single } = getMatrixExtremes(
+    answers.willingness_by_type,
+  );
+  if (skip || !highest) return;
+
+  let topic;
+  if (single || !lowest) {
+    topic = `受訪者在第9題對「${highest.label}」選擇了「${highest.value}」。請追問：為什麼濃縮片對這類內容產生這樣的影響？`;
+  } else {
+    topic = `受訪者在第9題中：
+- 對「${highest.label}」選擇「${highest.value}」（相對最願意去找原版）
+- 對「${lowest.label}」選擇「${lowest.value}」（相對最不願意去找原版）
+請先就意願較高的類型追問原因；若還有追問輪次，再簡短詢問意願較低類型的原因。`;
+  }
+
+  await startAiFollowup({
+    intro:
+      '根據你剛才對不同內容類型的回答，我想多了解一點你的想法，請用自己的話回答即可～',
+    topicInstruction: topic,
+    storageKey: 'followup_q9',
+  });
+}
+
+async function runQ10AiFollowup() {
+  const impact = answers.overall_willingness_impact;
+  await startAiFollowup({
+    intro: `你剛才選擇整體影響為「${impact}」。想請你多說一點～`,
+    topicInstruction: `受訪者認為整體而言，觀看濃縮片對想看原版內容的意願影響是「${impact}」。請追問：為什麼會這樣覺得？可請對方舉例。`,
+    storageKey: 'followup_q10',
+  });
+}
 
 async function afterScenarioDone() {
   await addBotBubble('謝謝你完成這份問卷！你的回答非常有價值 🙏');
@@ -852,7 +1089,7 @@ async function runInterview() {
   setProgress(4);
   addSectionLabel('個人基本資料');
   await addBotBubble(
-    '嗨！歡迎參與這份問卷 👋\n\n我是訪談助理，想了解大家觀看「濃縮／解說影片」（例如「X 分鐘看完整部劇」）的經驗與想法。\n\n全程約 5–10 分鐘，資料僅供學術研究，匿名處理。準備好的話我們開始囉！',
+    '嗨！歡迎參與這份問卷 👋\n\n我是訪談助理，想了解濃縮／解說影片對正版影集觀看意願的影響。\n\n全程約 8–12 分鐘，資料僅供學術研究，匿名處理。準備好的話我們開始囉！',
   );
 
   answers.gender = await askQuickPick('您的性別？', [
@@ -860,56 +1097,78 @@ async function runInterview() {
     '男',
     '不方便透露',
   ]);
-  setProgress(12);
+  setProgress(10);
 
   answers.ntu_student = await askQuickPick('是否為台大學生？', ['是', '否']);
-  setProgress(18);
+  setProgress(16);
 
   answers.video_types = await askMulti(
     '你平常會看以下哪些影片類型？（可複選，點選後按「完成選擇」）',
     VIDEO_TYPE_OPTIONS,
     { min: 1 },
   );
-  setProgress(26);
+  setProgress(24);
 
   if (!passesVideoTypeGate(answers.video_types)) {
     await finishEarly(
       EARLY_EXIT.VIDEO_TYPE_GATE,
-      '了解，你目前較少或未選擇觀看「劇情解說／濃縮影片」類型。依研究設計，我們到這裡先告一段落，仍非常感謝你的時間！',
+      '了解，你目前未勾選「劇集解說 / 濃縮影片」或「電影解說 / 濃縮影片」。依研究設計，我們到這裡先告一段落，仍非常感謝你的時間！',
       '謝謝你！',
       '此路徑不收集後續核心題，已記錄前面的匿名回答。',
     );
     return;
   }
 
-  addSectionLabel('觀看經驗');
-  answers.condensed_exposure = await askQuickPick(
-    '你有看過影集或電影的濃縮／解說影片嗎？（如「X 分鐘看完整部劇」）',
-    ['有，而且滿常看的', '有，但偶爾才看', '沒有'],
+  addSectionLabel('觀看習慣');
+  answers.condensed_source_types = await askMulti(
+    '您觀看的濃縮／解說影片，主要是哪類原版內容的濃縮？（可複選）',
+    CONDENSED_SOURCE_OPTIONS,
+    { min: 1 },
   );
-  setProgress(38);
+  await askOtherSupplement(
+    answers.condensed_source_types,
+    '其他（請簡短說明）',
+    'condensed_source_other',
+  );
+  setProgress(34);
 
-  if (answers.condensed_exposure === '沒有') {
-    await finishEarly(
-      EARLY_EXIT.NO_CONDENSED,
-      '了解，這份問卷主要想了解有接觸濃縮／解說影片的經驗，我們先到這裡。非常感謝你的參與！',
-      '謝謝你！',
-      '已匿名記錄你在前面題目的回答。',
-    );
-    return;
-  }
+  answers.condensed_frequency = await askQuickPick(
+    '你平常看濃縮片的頻率大約是？',
+    FREQUENCY_OPTIONS,
+  );
+  setProgress(42);
+
+  answers.contact_channels = await askMulti(
+    '您通常是透過什麼方式接觸到濃縮影片的？（可複選）',
+    CONTACT_OPTIONS,
+    { min: 1 },
+  );
+  await askOtherSupplement(
+    answers.contact_channels,
+    '其他（請簡短說明）',
+    'contact_channels_other',
+  );
+  setProgress(50);
 
   answers.subscription = await askQuickPick(
     '你目前有訂閱付費串流平台嗎？（如 Netflix、Disney+、friDay 等）',
     ['有，自己付費訂閱', '有，與家人或朋友共用', '沒有'],
   );
-  setProgress(48);
+  setProgress(56);
 
-  answers.condensed_frequency = await askQuickPick(
-    '你平常看濃縮片的頻率大約是？',
-    ['幾乎每天', '一週幾次', '一個月幾次', '很少，但有看過'],
-  );
-  setProgress(58);
+  if (hasSubscription(answers.subscription)) {
+    answers.subscription_reasons = await askMulti(
+      '承上題，您訂閱串流平台的主要原因是？（可複選）',
+      SUBSCRIPTION_REASON_OPTIONS,
+      { min: 1 },
+    );
+    await askOtherSupplement(
+      answers.subscription_reasons,
+      '其他（請簡短說明）',
+      'subscription_reasons_other',
+    );
+  }
+  setProgress(62);
 
   addSectionLabel('核心題');
   answers.after_condensed = await askQuickPick(
@@ -921,7 +1180,7 @@ async function runInterview() {
       AFTER_CONDENSED.IT_DEPENDS,
     ],
   );
-  setProgress(68);
+  setProgress(70);
 
   let follow = '';
   if (answers.after_condensed === AFTER_CONDENSED.IT_DEPENDS) {
@@ -934,50 +1193,28 @@ async function runInterview() {
       ],
     );
     answers.after_condensed_followup = follow;
-    setProgress(72);
   }
 
   const wantOriginal = routesToOriginalReasons(answers.after_condensed, follow);
   const wantNo = routesToNoOriginalReasons(answers.after_condensed, follow);
-
   await runReasonsBlock(wantOriginal, wantNo);
-  setProgress(82);
+  setProgress(78);
 
   addSectionLabel('態度與影響');
-  answers.interest_likelihood = await askQuickPick(
-    '你認為濃縮片讓你對原版內容產生興趣的機率大約是？',
-    [
-      '幾乎每次看完都會想去追原版',
-      '大約一半的機率會去追',
-      '很少，大概不到三成',
-      '幾乎不會因此去追原版',
-    ],
-  );
-  setProgress(88);
+  await askWillingnessMatrix();
+  setProgress(86);
 
-  answers.subscription_recent = await askQuickPick(
-    '過去三個月內，你有沒有因為先看了濃縮片，而後來訂閱或開始使用某個串流平台？',
-    ['有', '沒有', '本來就有訂閱，這不影響我的訂閱決定'],
-  );
-  setProgress(93);
+  await runQ9AiFollowup();
+  setProgress(92);
 
-  answers.perceived_effect = await askQuickPick(
-    '你覺得濃縮片對你觀看原版內容的影響是？',
-    [
-      '正面的，讓我更願意去看原版',
-      '中性的，不太影響我看不看原版',
-      '負面的，讓我覺得不需要再看原版了',
-    ],
+  answers.overall_willingness_impact = await askQuickPick(
+    '整體而言，觀看濃縮片對您想看原版內容的意願影響是？',
+    OVERALL_IMPACT_OPTIONS,
   );
-  setProgress(97);
+  setProgress(96);
 
-  if (ENABLE_SCENARIO) {
-    addSectionLabel('情境題（可選）');
-    await runScenarioIntro(
-      '最後是情境題，請用你自己的話回答即可：\n\n' + SCENARIO_PROMPT_TEXT,
-    );
-    return;
-  }
+  await runQ10AiFollowup();
+  setProgress(100);
 
   await afterScenarioDone();
 }
@@ -1003,8 +1240,8 @@ async function handleSend() {
 
   addUserBubble(text);
 
-  if (inScenario) {
-    await handleScenarioReply(text);
+  if (aiFollowupState) {
+    await handleAiFollowupReply(text);
   }
 }
 
