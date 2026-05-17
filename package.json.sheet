@@ -1,0 +1,7 @@
+{
+  "name": "vercel-google-sheets",
+  "version": "1.0.0",
+  "dependencies": {
+    "google-spreadsheet": "^3.3.0"
+  }
+}
