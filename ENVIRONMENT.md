@@ -13,37 +13,16 @@
 | 變數 | 說明 |
 |------|------|
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Service account 的 `client_email` |
-| `GOOGLE_PRIVATE_KEY` | Service account 的 `private_key`（整段含 `-----BEGIN...`；在 Vercel 可保留 `\n` 或實際換行） |
-| `GOOGLE_SHEETS_SPREADSHEET_ID` | 試算表 ID（網址 `.../d/{ID}/edit` 中間那段） |
+| `GOOGLE_PRIVATE_KEY` | Service account 的 `private_key` |
+| `GOOGLE_SHEETS_SPREADSHEET_ID` | 試算表 ID |
 | `GOOGLE_SHEETS_SHEET_NAME` | 分頁名稱，預設 `Sheet1` |
 
-建議試算表第一列（A1 起）標題與欄位順序一致（共 24 欄）：
+**欄位標題**：首次寫入時，`/api/save` 會自動在第 1 列寫入標題（若 A1 不是 `timestamp`）。若你已有舊資料列、沒有標題，可手動在第 1 列插入一行，或清空試算表後再測一次。
 
-1. `timestamp`  
-2. `early_exit`  
-3. `gender`  
-4. `ntu_student`  
-5. `video_types`  
-6. `condensed_source_types`  
-7. `condensed_source_other`  
-8. `condensed_frequency`  
-9. `contact_channels`  
-10. `contact_channels_other`  
-11. `subscription`  
-12. `subscription_reasons`  
-13. `subscription_reasons_other`  
-14. `after_condensed`  
-15. `after_condensed_followup`  
-16. `reasons_original`  
-17. `reasons_original_other`  
-18. `reasons_no_original`  
-19. `reasons_no_original_other`  
-20. `willingness_tv_series`  
-21. `willingness_movie`  
-22. `overall_willingness_impact`  
-23. `followup_q9_json`  
-24. `followup_q10_json`
+標題順序（31 欄）：
+
+`timestamp` · `early_exit` · `gender` · `age` · `ntu_student` · `condensed_watched_types` · `condensed_watched_other` · `streaming_watch_types` · `condensed_source_types` · `condensed_source_other` · `condensed_frequency` · `contact_channels` · `contact_channels_other` · `subscription` · `subscription_reasons` · `subscription_reasons_other` · `after_condensed` · `after_condensed_followup` · `reasons_original` · `reasons_original_other` · `reasons_no_original` · `reasons_no_original_other` · `willingness_drama` · `willingness_movie` · `willingness_variety` · `willingness_anime` · `willingness_reality` · `overall_willingness_impact` · `followup_q2_json` · `followup_q9_json` · `followup_q10_json`
 
 ## 本機開發
 
-若需在本機測 API，可使用 [Vercel CLI](https://vercel.com/docs/cli) `vercel dev`。將 [`.env.example`](.env.example) 複製為 `.env.local` 後填入數值（勿將 `.env` / `.env.local` commit）。
+`vercel dev` + `.env.local`（見 [`.env.example`](.env.example)）。

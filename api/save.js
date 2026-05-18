@@ -1,12 +1,45 @@
 import { google } from 'googleapis';
 
+const SHEET_HEADERS = [
+  'timestamp',
+  'early_exit',
+  'gender',
+  'age',
+  'ntu_student',
+  'condensed_watched_types',
+  'condensed_watched_other',
+  'streaming_watch_types',
+  'condensed_source_types',
+  'condensed_source_other',
+  'condensed_frequency',
+  'contact_channels',
+  'contact_channels_other',
+  'subscription',
+  'subscription_reasons',
+  'subscription_reasons_other',
+  'after_condensed',
+  'after_condensed_followup',
+  'reasons_original',
+  'reasons_original_other',
+  'reasons_no_original',
+  'reasons_no_original_other',
+  'willingness_drama',
+  'willingness_movie',
+  'willingness_variety',
+  'willingness_anime',
+  'willingness_reality',
+  'overall_willingness_impact',
+  'followup_q2_json',
+  'followup_q9_json',
+  'followup_q10_json',
+];
+
 function getSheetsClient() {
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
 
-  // 🛠️ 終極安全防呆：去除頭尾可能不小心加到的雙引號，並把所有可能的換行格式一次修正
-  privateKey = privateKey.replace(/^"|"$/g, ''); 
-  privateKey = privateKey.replace(/\\n/g, '\n'); 
+  privateKey = privateKey.replace(/^"|"$/g, '');
+  privateKey = privateKey.replace(/\\n/g, '\n');
 
   if (!clientEmail || !privateKey) {
     throw new Error(
@@ -14,7 +47,6 @@ function getSheetsClient() {
     );
   }
 
-  // 🛠️ 額外防呆：確保金鑰開頭跟結尾格式完全正確，不管 Vercel 怎麼讀都不會壞
   if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
     privateKey = `-----BEGIN PRIVATE KEY-----\n${privateKey}`;
   }
@@ -51,15 +83,17 @@ function flattenRow(payload) {
   const f = payload.followups || {};
   const ts = payload.timestamp || new Date().toISOString();
   const early = payload.early_exit || '';
-
   const w = a.willingness_by_type || {};
 
   return [
     ts,
     early,
     a.gender ?? '',
+    a.age ?? '',
     a.ntu_student ?? '',
-    joinArr(a.video_types),
+    joinArr(a.condensed_watched_types),
+    a.condensed_watched_other ?? '',
+    joinArr(a.streaming_watch_types),
     joinArr(a.condensed_source_types),
     a.condensed_source_other ?? '',
     a.condensed_frequency ?? '',
@@ -74,12 +108,33 @@ function flattenRow(payload) {
     a.reasons_original_other ?? '',
     joinArr(a.reasons_no_original),
     a.reasons_no_original_other ?? '',
-    w.tv_series ?? '',
+    w.drama ?? '',
     w.movie ?? '',
+    w.variety ?? '',
+    w.anime ?? '',
+    w.reality ?? '',
     a.overall_willingness_impact ?? '',
+    serializeJson(f.q2 ?? a.followup_q2),
     serializeJson(f.q9 ?? a.followup_q9),
     serializeJson(f.q10 ?? a.followup_q10),
   ];
+}
+
+async function ensureHeaders(sheets, spreadsheetId, sheetName) {
+  const headerRange = `${sheetName}!A1`;
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A1:AE1`,
+  });
+  const firstCell = res.data.values?.[0]?.[0];
+  if (firstCell !== 'timestamp') {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: headerRange,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [SHEET_HEADERS] },
+    });
+  }
 }
 
 export default async function handler(req, res) {
@@ -106,7 +161,9 @@ export default async function handler(req, res) {
 
   try {
     const sheets = getSheetsClient();
-    const range = `${sheetName}!A:X`;
+    await ensureHeaders(sheets, spreadsheetId, sheetName);
+
+    const range = `${sheetName}!A:AE`;
     const values = [flattenRow(payload)];
 
     await sheets.spreadsheets.values.append({
