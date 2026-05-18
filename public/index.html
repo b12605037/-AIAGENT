@@ -397,7 +397,8 @@
  * 6) 第 10 題：同上，避免 intro + AI 重複問同一件事。
  */
 const BOT_AVATAR = '🎬';
-const MAX_TURNS = 2;
+/** 追問區塊內，使用者最多可文字回答的次數（不含開場那一題） */
+const MAX_FOLLOWUP_REPLIES = 3;
 
 const EARLY_EXIT = {
   CONDENSED_GATE: 'condensed_gate',
@@ -807,7 +808,7 @@ ${topicInstruction}
 2. 每次只問一個追問，不要一次問很多問題。
 3. 追問必須與受訪者先前的答案相關，可引用具體選項。
 4. 若受訪者已充分說明原因，直接收尾，不要硬追。
-5. 最多追問 ${maxTurns} 輪；目前是第 ${turn} 輪（使用者剛完成一則回覆後計數）。
+5. 最多追問 ${maxTurns} 輪；目前是第 ${turn} 輪（使用者剛完成一則回覆後計數）。若已達上限，請簡短致謝並輸出 [END]，不要提出新問題。
 6. 不能評價受訪者的答案。
 7. 不能討論與問卷無關的話題。
 8. 收尾時說「謝謝你的分享！」並在訊息最後輸出 [END]。
@@ -959,8 +960,8 @@ async function startAiFollowup({ firstQuestion, topicInstruction, storageKey }) 
       topicInstruction,
       storageKey,
       history: [],
-      turns: 0,
-      maxTurns: MAX_TURNS,
+      userReplies: 0,
+      maxReplies: MAX_FOLLOWUP_REPLIES,
     };
     await addBotBubble(firstQuestion);
     aiFollowupState.history.push({ role: 'assistant', content: firstQuestion });
@@ -968,12 +969,58 @@ async function startAiFollowup({ firstQuestion, topicInstruction, storageKey }) 
   });
 }
 
+const FOLLOWUP_ACK_MESSAGES = [
+  '謝謝你的分享，我了解了！',
+  '收到，謝謝你願意多聊一點！',
+  '了解了，感謝你的說明！',
+];
+
+function pickFollowupAck() {
+  return FOLLOWUP_ACK_MESSAGES[
+    Math.floor(Math.random() * FOLLOWUP_ACK_MESSAGES.length)
+  ];
+}
+
+async function endAiFollowupSession({ lastBotText, hitReplyLimit, hadEndMarker }) {
+  const state = aiFollowupState;
+  if (!state) return;
+
+  answers[state.storageKey] = [...state.history];
+
+  const showGeminiClose =
+    lastBotText &&
+    (!hitReplyLimit || hadEndMarker) &&
+    lastBotText.length > 0;
+
+  if (showGeminiClose) {
+    const row = createRow('bot', lastBotText);
+    chatWrap.appendChild(row);
+    scrollBottom();
+    state.history.push({ role: 'assistant', content: lastBotText });
+    answers[state.storageKey] = [...state.history];
+    const alreadyThanks = /謝謝|感謝|了解|收到/.test(lastBotText);
+    if (!alreadyThanks) {
+      await delay(400);
+      await addBotBubble(pickFollowupAck(), false);
+    }
+  } else {
+    await addBotBubble(pickFollowupAck(), false);
+  }
+
+  aiFollowupState = null;
+  await delay(500);
+  finishAiFollowupSession();
+}
+
 async function handleAiFollowupReply(userText) {
   if (!aiFollowupState) return;
 
   aiFollowupState.history.push({ role: 'user', content: userText });
-  aiFollowupState.turns++;
+  aiFollowupState.userReplies++;
   disableInput();
+
+  const hitReplyLimit =
+    aiFollowupState.userReplies >= aiFollowupState.maxReplies;
 
   const typingRow = createRow('bot', null, true);
   chatWrap.appendChild(typingRow);
@@ -982,8 +1029,8 @@ async function handleAiFollowupReply(userText) {
   try {
     const systemPrompt = buildFollowupSystemPrompt(
       aiFollowupState.topicInstruction,
-      aiFollowupState.turns,
-      aiFollowupState.maxTurns,
+      aiFollowupState.userReplies,
+      aiFollowupState.maxReplies,
     );
     const replyText = await callGemini(
       systemPrompt,
@@ -991,33 +1038,33 @@ async function handleAiFollowupReply(userText) {
     );
     typingRow.remove();
 
-    const isEnd =
-      replyText.includes('[END]') ||
-      aiFollowupState.turns >= aiFollowupState.maxTurns;
+    const hadEndMarker = replyText.includes('[END]');
     const cleanReply = replyText.replace(/\[END\]/g, '').trim();
+    const shouldEnd = hadEndMarker || hitReplyLimit;
+
+    if (shouldEnd) {
+      await endAiFollowupSession({
+        lastBotText: cleanReply,
+        hitReplyLimit,
+        hadEndMarker,
+      });
+      return;
+    }
 
     const row = createRow('bot', cleanReply);
     chatWrap.appendChild(row);
     scrollBottom();
-
     aiFollowupState.history.push({ role: 'assistant', content: cleanReply });
     answers[aiFollowupState.storageKey] = [...aiFollowupState.history];
-
-    if (isEnd) {
-      aiFollowupState = null;
-      finishAiFollowupSession();
-    } else {
-      enableInput();
-    }
+    enableInput();
   } catch (err) {
     typingRow.remove();
-    const row = createRow('bot', '謝謝你的分享！🙏');
-    chatWrap.appendChild(row);
-    scrollBottom();
     if (aiFollowupState) {
       answers[aiFollowupState.storageKey] = [...aiFollowupState.history];
-      aiFollowupState = null;
     }
+    await addBotBubble('謝謝你的分享！🙏', false);
+    aiFollowupState = null;
+    await delay(500);
     finishAiFollowupSession();
   }
 }
@@ -1263,9 +1310,18 @@ async function handleSend() {
   }
 }
 
+let isComposing = false;
+userInput.addEventListener('compositionstart', () => {
+  isComposing = true;
+});
+userInput.addEventListener('compositionend', () => {
+  isComposing = false;
+});
+
 sendBtn.addEventListener('click', handleSend);
 userInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.isComposing || isComposing) return;
     e.preventDefault();
     handleSend();
   }
