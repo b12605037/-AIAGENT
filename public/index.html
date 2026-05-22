@@ -1088,16 +1088,18 @@ async function runInterview() {
   );
   setProgress(36);
 
-  answers.watch_motivation = await askQuickPick(
-    '您觀看濃縮影片的動機為何？',
+  answers.watch_motivation = await askMulti(
+    '您觀看濃縮影片的動機為何？（可複選）',
     Q2_MOTIVATION_OPTIONS,
+    { min: 1 },
   );
   setProgress(44);
-  if (answers.watch_motivation === REASON_OTHER) {
-    await addBotBubble('請簡短說明您的其他動機。');
-    answers.watch_motivation_other = (await waitForFreeText()).trim();
-  }
-  if (answers.watch_motivation === Q2_DEPENDS) {
+  await askOtherSupplement(
+    answers.watch_motivation,
+    REASON_OTHER,
+    'watch_motivation_other',
+  );
+  if (answers.watch_motivation.includes(Q2_DEPENDS)) {
     await runMotivationFollowup();
   }
   setProgress(50);
