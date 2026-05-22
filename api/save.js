@@ -3,36 +3,38 @@ import { google } from 'googleapis';
 const SHEET_HEADERS = [
   'timestamp',
   'early_exit',
+  'screening_watched_condensed',
   'gender',
   'age',
   'ntu_student',
-  'condensed_watched_types',
-  'condensed_watched_other',
-  'streaming_watch_types',
-  'condensed_source_types',
-  'condensed_source_other',
-  'condensed_frequency',
-  'contact_channels',
-  'contact_channels_other',
-  'subscription',
-  'subscription_reasons',
-  'subscription_reasons_other',
-  'after_condensed',
-  'after_condensed_followup',
-  'reasons_original',
-  'reasons_original_other',
-  'reasons_no_original',
-  'reasons_no_original_other',
-  'willingness_drama',
-  'willingness_movie',
-  'willingness_variety',
-  'willingness_anime',
-  'willingness_reality',
-  'overall_willingness_impact',
-  'followup_q2_json',
-  'followup_q9_json',
-  'followup_q10_json',
+  'favorite_condensed_types',
+  'favorite_condensed_other',
+  'watch_motivation',
+  'watch_motivation_other',
+  'actions_after_condensed',
+  'actions_after_other',
+  'low_effort_no_action_reasons',
+  'high_effort_watch_reasons',
+  'high_effort_watch_frequency',
+  'discovered_via_condensed',
+  'overall_impact_on_original',
+  'genres_attract_original',
+  'genres_attract_other',
+  'email',
+  'followup_motivation_json',
+  'followup_low_effort_json',
 ];
+
+function columnLetter(index) {
+  let n = index + 1;
+  let s = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
 
 function getSheetsClient() {
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -83,54 +85,49 @@ function flattenRow(payload) {
   const f = payload.followups || {};
   const ts = payload.timestamp || new Date().toISOString();
   const early = payload.early_exit || '';
-  const w = a.willingness_by_type || {};
 
   return [
     ts,
     early,
+    a.screening_watched ?? '',
     a.gender ?? '',
     a.age ?? '',
     a.ntu_student ?? '',
-    joinArr(a.condensed_watched_types),
-    a.condensed_watched_other ?? '',
-    joinArr(a.streaming_watch_types),
-    joinArr(a.condensed_source_types),
-    a.condensed_source_other ?? '',
-    a.condensed_frequency ?? '',
-    joinArr(a.contact_channels),
-    a.contact_channels_other ?? '',
-    a.subscription ?? '',
-    joinArr(a.subscription_reasons),
-    a.subscription_reasons_other ?? '',
-    a.after_condensed ?? '',
-    a.after_condensed_followup ?? '',
-    joinArr(a.reasons_original),
-    a.reasons_original_other ?? '',
-    joinArr(a.reasons_no_original),
-    a.reasons_no_original_other ?? '',
-    w.drama ?? '',
-    w.movie ?? '',
-    w.variety ?? '',
-    w.anime ?? '',
-    w.reality ?? '',
-    a.overall_willingness_impact ?? '',
-    serializeJson(f.q2 ?? a.followup_q2),
-    serializeJson(f.q9 ?? a.followup_q9),
-    serializeJson(f.q10 ?? a.followup_q10),
+    joinArr(a.favorite_condensed_types),
+    a.favorite_condensed_other ?? '',
+    a.watch_motivation ?? '',
+    a.watch_motivation_other ?? '',
+    joinArr(a.actions_after_condensed),
+    a.actions_after_other ?? '',
+    joinArr(a.low_effort_no_action_reasons),
+    joinArr(a.high_effort_watch_reasons),
+    a.high_effort_watch_frequency ?? '',
+    joinArr(a.discovered_via_condensed),
+    a.overall_impact_on_original ?? '',
+    joinArr(a.genres_attract_original),
+    a.genres_attract_other ?? '',
+    payload.email ?? a.email ?? '',
+    serializeJson(f.motivation ?? a.followup_motivation),
+    serializeJson(f.low_effort ?? a.followup_low_effort),
   ];
 }
 
+function parseRowIndex(updatedRange) {
+  if (!updatedRange) return null;
+  const m = String(updatedRange).match(/![A-Z]+(\d+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 async function ensureHeaders(sheets, spreadsheetId, sheetName) {
-  const headerRange = `${sheetName}!A1`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${sheetName}!A1:AE1`,
+    range: `${sheetName}!A1:Z1`,
   });
   const firstCell = res.data.values?.[0]?.[0];
   if (firstCell !== 'timestamp') {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: headerRange,
+      range: `${sheetName}!A1`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [SHEET_HEADERS] },
     });
@@ -159,22 +156,36 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, error: 'Invalid JSON body' });
   }
 
+  const phase = payload.phase || 'complete';
+
   try {
     const sheets = getSheetsClient();
     await ensureHeaders(sheets, spreadsheetId, sheetName);
 
-    const range = `${sheetName}!A:AE`;
-    const values = [flattenRow(payload)];
+    const emailCol = columnLetter(SHEET_HEADERS.indexOf('email'));
 
-    await sheets.spreadsheets.values.append({
+    if (phase === 'email' && payload.rowIndex) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!${emailCol}${payload.rowIndex}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[payload.email || '']] },
+      });
+      return res.status(200).json({ ok: true, rowIndex: payload.rowIndex });
+    }
+
+    const range = `${sheetName}!A:V`;
+    const appendRes = await sheets.spreadsheets.values.append({
       spreadsheetId,
       range,
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
-      requestBody: { values },
+      requestBody: { values: [flattenRow(payload)] },
     });
 
-    return res.status(200).json({ ok: true });
+    const rowIndex = parseRowIndex(appendRes.data.updates?.updatedRange);
+
+    return res.status(200).json({ ok: true, rowIndex });
   } catch (e) {
     console.error('save.js error', e);
     return res.status(500).json({ ok: false, error: e.message || 'Save failed' });
