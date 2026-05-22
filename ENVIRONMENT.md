@@ -15,13 +15,39 @@
 | `GOOGLE_SHEETS_SPREADSHEET_ID` | 試算表 ID |
 | `GOOGLE_SHEETS_SHEET_NAME` | 分頁名稱，預設 `Sheet1` |
 
-**欄位標題**：首次寫入時若 A1 不是 `timestamp`，會自動寫入第 1 列標題（22 欄）。
+## 試算表欄位對照（第 1 列標題 · 共 22 欄 A–V）
 
-`timestamp` · `early_exit` · `screening_watched_condensed` · `gender` · `age` · `ntu_student` · `favorite_condensed_types` · `favorite_condensed_other` · `watch_motivation` · `watch_motivation_other` · `actions_after_condensed` · `actions_after_other` · `low_effort_no_action_reasons` · `high_effort_watch_reasons` · `high_effort_watch_frequency` · `discovered_via_condensed` · `overall_impact_on_original` · `genres_attract_original` · `genres_attract_other` · `email` · `followup_motivation_json` · `followup_low_effort_json`
+**若你曾用舊版問卷填過資料，請清空資料列或開新分頁**，否則舊標題列會與新資料對不起來。程式會在標題不符時自動覆寫第 1 列。
 
-**寫入時機**：
-- 問卷本體答完 → `phase: complete`（append 一列，`email` 可為空）
-- 選填 email → `phase: email`（更新同一列的 `email` 欄）
+| 欄 | 標題 | 對應問卷 |
+|----|------|----------|
+| A | timestamp | 寫入時間 |
+| B | early_exit | 提早結束原因（完整填答為空） |
+| C | screening_watched_condensed | 篩選：是否看過濃縮影片 |
+| D | gender | 性別 |
+| E | age | 年齡 |
+| F | ntu_student | 是否台大學生 |
+| G | favorite_condensed_types | Q1 最常觀賞濃縮類型 |
+| H | favorite_condensed_other | Q1 其他說明 |
+| I | watch_motivation | Q2 觀看動機 |
+| J | watch_motivation_other | Q2 其他動機 |
+| K | actions_after_condensed | Q3 觀看後行動 |
+| L | actions_after_other | Q3 其他行動 |
+| M | low_effort_no_action_reasons | Q3-1 未進一步行動原因 |
+| N | high_effort_watch_reasons | Q3-2 驅動看原版原因 |
+| O | high_effort_watch_frequency | Q3-2 實際看原版頻率 |
+| P | discovered_via_condensed | Q4 透過濃縮接觸新內容 |
+| Q | overall_impact_on_original | Q5 整體影響 |
+| R | genres_attract_original | Q6 較易吸引去看的類型 |
+| S | genres_attract_other | Q6 其他 |
+| T | email | 選填 email（問卷結束後） |
+| U | followup_motivation_json | Q2「視作品種類而定」追問紀錄 |
+| V | followup_low_effort_json | Q3-1「視作品種類而異」追問紀錄 |
+
+## 寫入時機
+
+1. **問卷本體答完** → `phase: complete`（新增一列，email 可先空白）
+2. **有填 email** → `phase: email` + `rowIndex`（**整列更新**，確保 email 在 T 欄、其餘答案不錯位）
 
 ## 本機開發
 

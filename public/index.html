@@ -390,7 +390,7 @@
  * 分支規則（對齊 question-new.md）
  * 篩選「是否看過濃縮影片」→ 否則結束
  * 第2題「視作品種類而定」、第3-1.1「視影視作品種類而異」→ Gemini 追問
- * 第3題可複選低/高努力行為 → 分支顯示 3-1.1 / 3-2.1 / 3-2.2
+ * 第3題複選後依內部分類分支 → 3-1.1 / 3-2.1 / 3-2.2（介面不顯示分類標籤）
  * 問卷本體答完先寫入試算表，email 選填可事後更新同一列
  */
 const BOT_AVATAR = '🎬';
@@ -806,6 +806,29 @@ async function callGemini(systemPrompt, messages) {
   );
 }
 
+function buildAnswersSnapshot() {
+  return {
+    screening_watched: answers.screening_watched,
+    gender: answers.gender,
+    age: answers.age,
+    ntu_student: answers.ntu_student,
+    favorite_condensed_types: answers.favorite_condensed_types,
+    favorite_condensed_other: answers.favorite_condensed_other,
+    watch_motivation: answers.watch_motivation,
+    watch_motivation_other: answers.watch_motivation_other,
+    actions_after_condensed: answers.actions_after_condensed,
+    actions_after_other: answers.actions_after_other,
+    low_effort_no_action_reasons: answers.low_effort_no_action_reasons,
+    high_effort_watch_reasons: answers.high_effort_watch_reasons,
+    high_effort_watch_frequency: answers.high_effort_watch_frequency,
+    discovered_via_condensed: answers.discovered_via_condensed,
+    overall_impact_on_original: answers.overall_impact_on_original,
+    genres_attract_original: answers.genres_attract_original,
+    genres_attract_other: answers.genres_attract_other,
+    email: answers.email || '',
+  };
+}
+
 async function saveAnswersPayload({ early_exit, phase = 'complete' }) {
   if (!submissionTimestamp) {
     submissionTimestamp = new Date().toISOString();
@@ -817,11 +840,13 @@ async function saveAnswersPayload({ early_exit, phase = 'complete' }) {
     rowIndex: savedSheetRowIndex,
     early_exit: early_exit || '',
     email: answers.email || '',
-    answers: { ...answers },
+    answers: buildAnswersSnapshot(),
     followups: {
       motivation: answers.followup_motivation || null,
       low_effort: answers.followup_low_effort || null,
     },
+    followup_motivation: answers.followup_motivation || null,
+    followup_low_effort: answers.followup_low_effort || null,
   };
 
   try {
@@ -1078,10 +1103,7 @@ async function runInterview() {
   setProgress(50);
 
   answers.actions_after_condensed = await askMulti(
-    '承上題，請選出最符合您「觀看完濃縮影片後」的行動。（可複選）\n\n【低努力行為】\n' +
-      LOW_EFFORT_ACTIONS.map((o) => '・' + o).join('\n') +
-      '\n\n【高努力行為】\n' +
-      HIGH_EFFORT_ACTIONS.map((o) => '・' + o).join('\n'),
+    '承上題，請選出最符合您「觀看完濃縮影片後」的行動。（可複選）',
     Q3_ALL_ACTIONS,
     { min: 1 },
   );
@@ -1094,7 +1116,7 @@ async function runInterview() {
 
   if (hasLowEffort(answers.actions_after_condensed)) {
     answers.low_effort_no_action_reasons = await askMulti(
-      '承上題，您未進一步行動（或僅低努力行為）的主要原因是？（可複選）',
+      '承上題，您未進一步行動的原因為何？（可複選）',
       Q3_1_REASONS,
       { min: 1 },
     );
