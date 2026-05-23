@@ -130,7 +130,7 @@ function flattenRow(payload) {
     a.ntu_student ?? '',
     joinArr(a.favorite_condensed_types),
     a.favorite_condensed_other ?? '',
-    a.watch_motivation ?? '',
+    joinArr(a.watch_motivation),
     a.watch_motivation_other ?? '',
     joinArr(a.actions_after_condensed),
     a.actions_after_other ?? '',
